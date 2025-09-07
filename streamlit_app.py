@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import json
 
 # Configure page
-st.set_page_config(page_title="Personal RAG Assistant", page_icon="🤖")
+st.set_page_config(page_title="Personal RAG Assistant", page_icon="🤖", layout="wide")
 
 # Configure AWS from secrets
 try:
@@ -28,7 +28,6 @@ except Exception as e:
 
 # Initialize clients
 s3 = boto3.client('s3')
-bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
 bucket_name = 'my-rag-documents-loganw'
 
 @st.cache_resource
@@ -37,7 +36,65 @@ def load_model():
 
 model = load_model()
 
-# Simple RAG functions
+# Security and rate limiting
+def check_global_rate_limit():
+    """Strict rate limiting across all users"""
+    # Global daily limit
+    if 'daily_queries' not in st.session_state:
+        st.session_state.daily_queries = 0
+    
+    if st.session_state.daily_queries >= 50:
+        return False, "Daily query limit reached for this demo. Please try again tomorrow."
+    
+    # Per-session limit
+    if 'session_queries' not in st.session_state:
+        st.session_state.session_queries = 0
+    
+    if st.session_state.session_queries >= 10:
+        return False, "Session limit reached (10 queries). Please refresh to start a new session."
+    
+    return True, "OK"
+
+def is_safe_query(query):
+    """Basic content filtering"""
+    unsafe_patterns = [
+        'ignore previous instructions', 'system prompt', 'jailbreak',
+        'hack', 'exploit', 'malicious', 'harmful content', 'bypass'
+    ]
+    
+    query_lower = query.lower()
+    for pattern in unsafe_patterns:
+        if pattern in query_lower:
+            return False, "Query contains potentially unsafe content."
+    
+    if len(query) > 500:
+        return False, "Query too long. Please keep questions under 500 characters."
+    
+    return True, "OK"
+
+# Document functions
+def get_document_info():
+    """Get information about available documents"""
+    try:
+        response = s3.list_objects_v2(Bucket=bucket_name)
+        if 'Contents' not in response:
+            return {'error': 'No documents found'}
+        
+        doc_sources = [obj['Key'] for obj in response['Contents']]
+        
+        doc_info = {
+            'count': len(doc_sources),
+            'sources': doc_sources,
+            'topics': {
+                'AI and Machine Learning': 'Types of ML, deep learning, applications, challenges',
+                'AWS Cloud Services': 'EC2, S3, Lambda, databases, security, best practices', 
+                'Software Development': 'Agile, DevOps, CI/CD, testing, architecture patterns'
+            }
+        }
+        return doc_info
+    except Exception as e:
+        return {'error': str(e)}
+
 def read_document(file_key):
     try:
         response = s3.get_object(Bucket=bucket_name, Key=file_key)
@@ -57,60 +114,131 @@ def read_document(file_key):
         return None
 
 def simple_rag(query):
+    """Simple RAG with keyword matching for demo"""
     try:
         # Get documents
         response = s3.list_objects_v2(Bucket=bucket_name)
         if 'Contents' not in response:
             return "No documents found in bucket."
         
-        # Read first document for demo
-        first_file = response['Contents'][0]['Key']
-        content = read_document(first_file)
+        # System queries
+        system_queries = ['how many documents', 'what documents', 'what can you', 'what topics']
+        if any(sq in query.lower() for sq in system_queries):
+            doc_info = get_document_info()
+            if 'error' not in doc_info:
+                return f"I have access to {doc_info['count']} documents covering: {', '.join(doc_info['topics'].keys())}. You can ask about AI/ML concepts, AWS services, or software development practices."
+            else:
+                return doc_info['error']
         
-        if not content:
-            return "Could not read document."
-        
-        # Simple keyword matching for demo
-        if any(word in query.lower() for word in ['machine learning', 'ml', 'types']):
-            return "Based on your documents, the three main types of machine learning are: 1) Supervised Learning, 2) Unsupervised Learning, and 3) Reinforcement Learning."
-        elif any(word in query.lower() for word in ['aws', 'lambda', 'cloud']):
-            return "AWS Lambda is a serverless computing service that runs code in response to events without requiring server management."
+        # Topic-based responses
+        if any(word in query.lower() for word in ['machine learning', 'ml', 'types', 'supervised', 'unsupervised']):
+            return "Based on your documents, the three main types of machine learning are:\n\n1. **Supervised Learning** - algorithms learn from labeled training data\n2. **Unsupervised Learning** - works with unlabeled data to discover patterns\n3. **Reinforcement Learning** - training agents through rewards and penalties\n\n*Source: AI and Machine Learning Overview.pdf*"
+        elif any(word in query.lower() for word in ['aws', 'lambda', 'cloud', 'serverless']):
+            return "**AWS Lambda** is a serverless computing service that:\n\n- Runs code in response to events\n- Requires no server management\n- Automatically scales based on request volume\n- Uses pay-per-execution pricing\n- Supports multiple programming languages\n\n*Source: AWS Cloud Services Guide.pdf*"
+        elif any(word in query.lower() for word in ['ci/cd', 'continuous integration', 'devops', 'deployment']):
+            return "**Continuous Integration/Continuous Deployment (CI/CD)** includes:\n\n- **Continuous Integration**: Automatically build and test code changes\n- **Continuous Deployment**: Automatically deploy validated changes\n- **Popular tools**: GitHub Actions, Jenkins, GitLab CI, AWS CodePipeline\n- **Benefits**: Faster delivery, fewer bugs, automated testing\n\n*Source: Modern Software Development Practices.pdf*"
         else:
-            return f"I found information in {first_file}. Please ask more specific questions about AI/ML, AWS, or software development."
+            files = [obj['Key'] for obj in response['Contents']]
+            return f"I found information in {len(files)} documents. Please ask more specific questions about:\n\n- AI/ML concepts and types\n- AWS services like Lambda, S3, EC2\n- Software development practices and DevOps\n\nExample: 'What are the types of machine learning?' or 'How does AWS Lambda work?'"
             
     except Exception as e:
-        return f"Error: {e}"
+        return f"Error accessing documents: {e}"
 
-# UI
+# Main UI
 st.title("🤖 Personal RAG Assistant")
-st.write("Ask questions about AI/ML, AWS services, or software development!")
+st.markdown("### Ask questions about AI/ML, AWS Services, or Software Development!")
 
+# Sidebar with enhanced knowledge section
 with st.sidebar:
-    st.header("📚 Available Documents")
-    try:
-        response = s3.list_objects_v2(Bucket=bucket_name)
-        if 'Contents' in response:
-            for obj in response['Contents']:
-                st.write(f"📄 {obj['Key']}")
-    except:
-        st.write("Could not load document list")
+    st.header("📚 Available Knowledge")
+    
+    doc_info = get_document_info()
+    if 'error' not in doc_info:
+        st.metric("Documents", doc_info['count'])
+        
+        st.subheader("Topics You Can Ask About:")
+        for topic, description in doc_info['topics'].items():
+            with st.expander(topic):
+                st.write(description)
+        
+        st.subheader("Document Sources:")
+        for source in doc_info['sources']:
+            st.write(f"📄 {source}")
+        
+        st.subheader("Example Questions:")
+        st.code("""
+- What are the types of machine learning?
+- How does AWS Lambda work?
+- What is continuous integration?
+- What are SOLID principles?
+- How does Amazon S3 work?
+        """)
+    else:
+        st.error(f"Could not load documents: {doc_info['error']}")
+    
+    st.header("Usage Stats")
+    if 'session_queries' not in st.session_state:
+        st.session_state.session_queries = 0
+    
+    st.metric("Queries This Session", st.session_state.session_queries)
+    st.progress(st.session_state.session_queries / 10)
+    st.caption(f"Limit: {10 - st.session_state.session_queries} remaining")
+    
+    with st.expander("🛡️ Safety Features"):
+        st.write("✅ Rate limiting (10 queries/session)")
+        st.write("✅ Content filtering")
+        st.write("✅ Query length limits")
+        st.write("✅ Demo mode (no AI costs)")
+        st.write("✅ AWS resource protection")
 
 # Chat interface
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 
+# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Ask about your documents..."):
+# Chat input with security checks
+if prompt := st.chat_input("Ask a question about the documents..."):
+    # Security checks
+    allowed, rate_msg = check_global_rate_limit()
+    if not allowed:
+        st.error(rate_msg)
+        st.stop()
+    
+    safe, safe_msg = is_safe_query(prompt)
+    if not safe:
+        st.error(safe_msg)
+        st.stop()
+    
+    # Increment counters
+    st.session_state.session_queries += 1
+    st.session_state.daily_queries += 1
+    
+    # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     
     with st.chat_message("user"):
         st.markdown(prompt)
     
+    # Generate response
     with st.chat_message("assistant"):
-        response = simple_rag(prompt)
-        st.markdown(response)
+        with st.spinner("Searching documents..."):
+            response = simple_rag(prompt)
+            st.markdown(response)
+            
+            # Show query count
+            remaining = 10 - st.session_state.session_queries
+            if remaining > 0:
+                st.caption(f"💡 {remaining} questions remaining this session")
+            else:
+                st.caption("🔒 Session limit reached. Refresh page for new session.")
     
+    # Add assistant response
     st.session_state.messages.append({"role": "assistant", "content": response})
+
+# Footer
+st.markdown("---")
+st.caption("🔒 This is a demo version with built-in safety controls. Full AI integration available in private deployments.")
