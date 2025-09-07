@@ -26,7 +26,12 @@ Thumbs.db
 # Streamlit
 .streamlit/secrets.toml
 
-# AWS credentials (never commit these!)
+# AWS credentials
 .aws/
 credentials
 config
+
+# GitHub's Python additions
+*.egg-info/
+dist/
+build/
