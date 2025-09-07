@@ -2,6 +2,9 @@
 
 A Retrieval-Augmented Generation (RAG) system that allows you to chat with your documents using AWS Bedrock and Claude.
 
+## 🚀 Live Demo
+**[Try it here: https://personal-rag-assistant.streamlit.app/](https://personal-rag-assistant.streamlit.app/)**
+
 ## Features
 - 📄 Document processing (PDF support)
 - 🔍 Semantic search with embeddings
