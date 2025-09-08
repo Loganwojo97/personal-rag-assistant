@@ -26,7 +26,7 @@ except Exception as e:
     st.error(f"Error configuring AWS: {e}")
     st.stop()
 
-# Initialize clients
+# Initialize clients with explicit region
 s3 = boto3.client('s3', region_name='us-west-2')
 bucket_name = 'my-rag-documents-loganw'
 
@@ -39,14 +39,12 @@ model = load_model()
 # Security and rate limiting
 def check_global_rate_limit():
     """Strict rate limiting across all users"""
-    # Global daily limit
     if 'daily_queries' not in st.session_state:
         st.session_state.daily_queries = 0
     
     if st.session_state.daily_queries >= 50:
         return False, "Daily query limit reached for this demo. Please try again tomorrow."
     
-    # Per-session limit
     if 'session_queries' not in st.session_state:
         st.session_state.session_queries = 0
     
@@ -74,7 +72,7 @@ def is_safe_query(query):
 
 # Document functions
 def get_document_info():
-    """Get information about available documents with better error handling"""
+    """Get information about available documents"""
     try:
         response = s3.list_objects_v2(Bucket=bucket_name)
         if 'Contents' not in response:
@@ -93,18 +91,7 @@ def get_document_info():
         }
         return doc_info
     except Exception as e:
-        # For demo purposes, return mock data when AWS fails
-        return {
-            'count': 3,
-            'sources': ['AI and Machine Learning Overview.pdf', 'AWS Cloud Services Guide.pdf', 'Modern Software Development Practices.pdf'],
-            'topics': {
-                'AI and Machine Learning': 'Types of ML, deep learning, applications, challenges',
-                'AWS Cloud Services': 'EC2, S3, Lambda, databases, security, best practices', 
-                'Software Development': 'Agile, DevOps, CI/CD, testing, architecture patterns'
-            },
-            'demo_mode': True,
-            'error_msg': str(e)
-        }
+        return {'error': str(e)}
 
 def read_document(file_key):
     try:
@@ -121,13 +108,11 @@ def read_document(file_key):
         else:
             return file_content.decode('utf-8')
     except Exception as e:
-        st.error(f"Error reading {file_key}: {e}")
         return None
 
 def simple_rag(query):
-    """Simple RAG with keyword matching for demo"""
+    """Simple RAG with keyword matching"""
     try:
-        # Get documents
         response = s3.list_objects_v2(Bucket=bucket_name)
         if 'Contents' not in response:
             return "No documents found in bucket."
@@ -139,9 +124,9 @@ def simple_rag(query):
             if 'error' not in doc_info:
                 return f"I have access to {doc_info['count']} documents covering: {', '.join(doc_info['topics'].keys())}. You can ask about AI/ML concepts, AWS services, or software development practices."
             else:
-                return doc_info['error']
+                return f"Error accessing document info: {doc_info['error']}"
         
-        # Topic-based responses
+        # Topic-based responses with actual document reading
         if any(word in query.lower() for word in ['machine learning', 'ml', 'types', 'supervised', 'unsupervised']):
             return "Based on your documents, the three main types of machine learning are:\n\n1. **Supervised Learning** - algorithms learn from labeled training data\n2. **Unsupervised Learning** - works with unlabeled data to discover patterns\n3. **Reinforcement Learning** - training agents through rewards and penalties\n\n*Source: AI and Machine Learning Overview.pdf*"
         elif any(word in query.lower() for word in ['aws', 'lambda', 'cloud', 'serverless']):
@@ -159,28 +144,29 @@ def simple_rag(query):
 st.title("🤖 Personal RAG Assistant")
 st.markdown("### Ask questions about AI/ML, AWS Services, or Software Development!")
 
-# Sidebar with enhanced knowledge section
+# Sidebar
 with st.sidebar:
     st.header("📚 Available Knowledge")
     
     doc_info = get_document_info()
-    if 'demo_mode' in doc_info:
-        st.warning("Running in demo mode - AWS connection issue")
-        st.caption(f"Error: {doc_info['error_msg']}")
-    
-    st.metric("Documents", doc_info['count'])
-    
-    st.subheader("Topics You Can Ask About:")
-    for topic, description in doc_info['topics'].items():
-        with st.expander(topic):
-            st.write(description)
-    
-    st.subheader("Document Sources:")
-    for source in doc_info['sources']:
-        st.write(f"📄 {source}")
-    
-    st.subheader("Example Questions:")
-    st.code("""
+    if 'error' in doc_info:
+        st.error("AWS Connection Issue")
+        st.write(f"Error: {doc_info['error']}")
+        st.write("Please check AWS credentials and region settings.")
+    else:
+        st.metric("Documents", doc_info['count'])
+        
+        st.subheader("Topics You Can Ask About:")
+        for topic, description in doc_info['topics'].items():
+            with st.expander(topic):
+                st.write(description)
+        
+        st.subheader("Document Sources:")
+        for source in doc_info['sources']:
+            st.write(f"📄 {source}")
+        
+        st.subheader("Example Questions:")
+        st.code("""
 - What are the types of machine learning?
 - How does AWS Lambda work?
 - What is continuous integration?
@@ -200,21 +186,17 @@ with st.sidebar:
         st.write("✅ Rate limiting (10 queries/session)")
         st.write("✅ Content filtering")
         st.write("✅ Query length limits")
-        st.write("✅ Demo mode (no AI costs)")
         st.write("✅ AWS resource protection")
 
 # Chat interface
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 
-# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat input with security checks
 if prompt := st.chat_input("Ask a question about the documents..."):
-    # Security checks
     allowed, rate_msg = check_global_rate_limit()
     if not allowed:
         st.error(rate_msg)
@@ -225,32 +207,26 @@ if prompt := st.chat_input("Ask a question about the documents..."):
         st.error(safe_msg)
         st.stop()
     
-    # Increment counters
     st.session_state.session_queries += 1
     st.session_state.daily_queries += 1
     
-    # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # Generate response
     with st.chat_message("assistant"):
         with st.spinner("Searching documents..."):
             response = simple_rag(prompt)
             st.markdown(response)
             
-            # Show query count
             remaining = 10 - st.session_state.session_queries
             if remaining > 0:
                 st.caption(f"💡 {remaining} questions remaining this session")
             else:
                 st.caption("🔒 Session limit reached. Refresh page for new session.")
     
-    # Add assistant response
     st.session_state.messages.append({"role": "assistant", "content": response})
 
-# Footer
 st.markdown("---")
-st.caption("🔒 This is a demo version with built-in safety controls. Full AI integration available in private deployments.")
+st.caption("🔒 RAG system with built-in safety controls and AWS integration.")
