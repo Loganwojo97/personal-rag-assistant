@@ -27,7 +27,7 @@ except Exception as e:
     st.stop()
 
 # Initialize clients
-s3 = boto3.client('s3')
+s3 = boto3.client('s3', region_name='us-west-2')
 bucket_name = 'my-rag-documents-loganw'
 
 @st.cache_resource
@@ -174,21 +174,19 @@ with st.sidebar:
     for topic, description in doc_info['topics'].items():
         with st.expander(topic):
             st.write(description)
-        
-        st.subheader("Document Sources:")
-        for source in doc_info['sources']:
-            st.write(f"📄 {source}")
-        
-        st.subheader("Example Questions:")
-        st.code("""
+    
+    st.subheader("Document Sources:")
+    for source in doc_info['sources']:
+        st.write(f"📄 {source}")
+    
+    st.subheader("Example Questions:")
+    st.code("""
 - What are the types of machine learning?
 - How does AWS Lambda work?
 - What is continuous integration?
 - What are SOLID principles?
 - How does Amazon S3 work?
         """)
-    else:
-        st.error(f"Could not load documents: {doc_info['error']}")
     
     st.header("Usage Stats")
     if 'session_queries' not in st.session_state:
