@@ -74,11 +74,11 @@ def is_safe_query(query):
 
 # Document functions
 def get_document_info():
-    """Get information about available documents"""
+    """Get information about available documents with better error handling"""
     try:
         response = s3.list_objects_v2(Bucket=bucket_name)
         if 'Contents' not in response:
-            return {'error': 'No documents found'}
+            return {'error': 'No documents found in bucket'}
         
         doc_sources = [obj['Key'] for obj in response['Contents']]
         
@@ -93,7 +93,18 @@ def get_document_info():
         }
         return doc_info
     except Exception as e:
-        return {'error': str(e)}
+        # For demo purposes, return mock data when AWS fails
+        return {
+            'count': 3,
+            'sources': ['AI and Machine Learning Overview.pdf', 'AWS Cloud Services Guide.pdf', 'Modern Software Development Practices.pdf'],
+            'topics': {
+                'AI and Machine Learning': 'Types of ML, deep learning, applications, challenges',
+                'AWS Cloud Services': 'EC2, S3, Lambda, databases, security, best practices', 
+                'Software Development': 'Agile, DevOps, CI/CD, testing, architecture patterns'
+            },
+            'demo_mode': True,
+            'error_msg': str(e)
+        }
 
 def read_document(file_key):
     try:
@@ -153,13 +164,16 @@ with st.sidebar:
     st.header("📚 Available Knowledge")
     
     doc_info = get_document_info()
-    if 'error' not in doc_info:
-        st.metric("Documents", doc_info['count'])
-        
-        st.subheader("Topics You Can Ask About:")
-        for topic, description in doc_info['topics'].items():
-            with st.expander(topic):
-                st.write(description)
+    if 'demo_mode' in doc_info:
+        st.warning("Running in demo mode - AWS connection issue")
+        st.caption(f"Error: {doc_info['error_msg']}")
+    
+    st.metric("Documents", doc_info['count'])
+    
+    st.subheader("Topics You Can Ask About:")
+    for topic, description in doc_info['topics'].items():
+        with st.expander(topic):
+            st.write(description)
         
         st.subheader("Document Sources:")
         for source in doc_info['sources']:
